@@ -3,98 +3,247 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Webcam ASCII Art Converter</title>
+  <title>Fourier Series Drawer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
   <style>
-    body { margin: 0; background: #111; color: #eee; font-family: monospace; display: flex; flex-direction: column; align-items: center; }
-    #controls { margin: 1rem; display: flex; gap: 1rem; align-items: center; }
-    label { font-size: 0.9rem; }
-    input[type=range] { width: 150px; }
-    #video, #canvas { display: none; }
-    #ascii { white-space: pre; line-height: 7px; font-size: 7px; }
-    #ascii.dark { background: #000; color: #0f0; }
-    #ascii.light { background: #fff; color: #000; }
-    button { padding: 0.5rem 1rem; background: #222; border: 1px solid #555; color: #eee; cursor: pointer; }
-    button:hover { background: #333; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; overflow: hidden; font-family: 'Segoe UI', sans-serif; color: #eee; }
+    canvas { position: absolute; top: 0; left: 0; }
+    #overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: none; /* hidden until signature done */
+      background: rgba(0,0,0,0.8); text-align: center;
+      justify-content: center; align-items: center; flex-direction: column;
+      font-family: 'Pacifico', cursive;
+      color: #eee; z-index: 10; padding: 1rem;
+    }
+    #overlay h1 { font-size: 2rem; margin-bottom: 1rem; }
+    #overlay p { font-size: 1rem; margin: 0.5rem 0; }
+    #overlay a { color: #A3FF84; text-decoration: none; }
+    #overlay a:hover { text-decoration: underline; }
+    #overlay button {
+      margin-top: 1.5rem; padding: 0.75rem 1.5rem;
+      font-size: 1rem; border: 2px solid #A3FF84; background: transparent;
+      color: #A3FF84; cursor: pointer; border-radius: 4px;
+      transition: background 0.2s;
+    }
+    #overlay button:hover { background: rgba(163,255,132,0.2); }
+    #controls {
+      position: absolute; top: 20px; right: 20px; z-index: 10; display: none;
+    }
+    #controls button {
+      margin-left: 8px; padding: 0.5rem 1rem;
+      font-size: 0.9rem; border: 2px solid #A3FF84; background: transparent;
+      color: #A3FF84; cursor: pointer; border-radius: 4px;
+      transition: background 0.2s;
+    }
+    #controls button:hover { background: rgba(163,255,132,0.2); }
   </style>
 </head>
 <body>
-  <h1>Webcam ASCII Art Converter</h1>
-  <div id="controls">
-    <button id="toggleCam">Start Camera</button>
-    <label>Width: <input type="range" id="widthSlider" min="40" max="200" value="100"></label>
-    <label>Invert: <input type="checkbox" id="invertToggle"></label>
-    <label>Chars: <input type="text" id="charSet" value="@%#*+=-:. " size="10"></label>
+  <div id="overlay">
+    <h1>Draw something (one continuous line)<br>to see it turned into a Fourier series animation!</h1>
+    <p>Confused? This <a href="https://youtu.be/spUNpyF58BY" target="_blank">video</a> explains Fourier series better than I ever could.</p>
+    <p><em>tldw:</em> circles + math + drawings = ✨</p>
+    <button id="startDraw">Draw your own</button>
   </div>
-  <div id="ascii" class="dark"></div>
-  <video id="video" autoplay playsinline></video>
+  <div id="controls">
+    <button id="clear">Clear</button>
+    <button id="restart">Restart</button>
+  </div>
   <canvas id="canvas"></canvas>
-
   <script>
-    const video = document.getElementById('video');
+    // Complex helper
+    class Complex {
+      constructor(re, im) { this.re = re; this.im = im; }
+      add(c) { return new Complex(this.re + c.re, this.im + c.im); }
+      mul(c) {
+        return new Complex(
+          this.re * c.re - this.im * c.im,
+          this.re * c.im + this.im * c.re
+        );
+      }
+    }
+    // Discrete Fourier Transform
+    function dft(x) {
+      const X = [];
+      const N = x.length;
+      for (let k = 0; k < N; k++) {
+        let sum = new Complex(0, 0);
+        for (let n = 0; n < N; n++) {
+          const phi = (2 * Math.PI * k * n) / N;
+          const c = new Complex(Math.cos(phi), -Math.sin(phi));
+          sum = sum.add(x[n].mul(c));
+        }
+        sum.re /= N; sum.im /= N;
+        let freq = k;
+        if (k > N/2) freq = k - N;
+        const amp = Math.hypot(sum.re, sum.im);
+        const phase = Math.atan2(sum.im, sum.re);
+        X.push({ freq, amp, phase });
+      }
+      return X.sort((a, b) => b.amp - a.amp);
+    }
+
+    // Canvas setup
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const asciiDiv = document.getElementById('ascii');
-    const toggleCamBtn = document.getElementById('toggleCam');
-    const widthSlider = document.getElementById('widthSlider');
-    const invertToggle = document.getElementById('invertToggle');
-    const charSetInput = document.getElementById('charSet');
+    let W, H;
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
 
-    let streaming = false;
+    // State
+    let drawing = [];
+    let fourier = [];
+    let time = 0;
+    let path = [];
+    let animating = false;
 
-    toggleCamBtn.addEventListener('click', async () => {
-      if (!streaming) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          video.srcObject = stream;
-          await video.play();
-          streaming = true;
-          toggleCamBtn.textContent = 'Stop Camera';
-          renderLoop();
-        } catch (err) {
-          alert('Camera access denied or unavailable.');
-        }
-      } else {
-        const tracks = video.srcObject.getTracks();
-        tracks.forEach(t => t.stop());
-        streaming = false;
-        toggleCamBtn.textContent = 'Start Camera';
-        asciiDiv.textContent = '';
+    const overlay = document.getElementById('overlay');
+    const controls = document.getElementById('controls');
+    const startDraw = document.getElementById('startDraw');
+    const clearBtn = document.getElementById('clear');
+    const restartBtn = document.getElementById('restart');
+
+    // Draw signature text on load or on clear
+    function startSignature() {
+      controls.style.display = 'none';
+      overlay.style.display = 'none';
+      animating = false;
+      path = [];
+      ctx.clearRect(0, 0, W, H);
+      // signature style text
+      ctx.save();
+      ctx.font = '120px Pacifico';
+      ctx.strokeStyle = '#A3FF84';
+      ctx.lineWidth = 3;
+      const text = 'Huy';
+      const metrics = ctx.measureText(text);
+      const x = (W - metrics.width) / 2;
+      const y = H / 2 + 40;
+      ctx.strokeText(text, x, y);
+      ctx.restore();
+      // show overlay after 2s
+      setTimeout(() => {
+        overlay.style.display = 'flex';
+      }, 2000);
+    }
+
+    // Start user drawing
+    startDraw.addEventListener('click', () => {
+      overlay.style.display = 'none';
+      controls.style.display = 'block';
+      drawing = [];
+      path = [];
+      animating = false;
+      ctx.clearRect(0, 0, W, H);
+    });
+
+    // Clear and redraw signature
+    clearBtn.addEventListener('click', startSignature);
+
+    // Restart drawing animation
+    restartBtn.addEventListener('click', () => {
+      if (fourier.length) {
+        time = 0;
+        path = [];
+        animating = true;
+        animate();
       }
     });
 
-    function renderLoop() {
-      if (!streaming) return;
-      const charSet = charSetInput.value || '@%#*+=-:. ';
-      const invert = invertToggle.checked;
-      const asciiWidth = parseInt(widthSlider.value, 10);
-
-      const videoWidth = video.videoWidth;
-      const videoHeight = video.videoHeight;
-      const aspect = videoHeight / videoWidth;
-      const asciiHeight = Math.round(asciiWidth * aspect * 0.5);
-
-      canvas.width = asciiWidth;
-      canvas.height = asciiHeight;
-      ctx.drawImage(video, 0, 0, asciiWidth, asciiHeight);
-
-      const imageData = ctx.getImageData(0, 0, asciiWidth, asciiHeight).data;
-      let asciiStr = '';
-      for (let y = 0; y < asciiHeight; y++) {
-        for (let x = 0; x < asciiWidth; x++) {
-          const offset = (y * asciiWidth + x) * 4;
-          const r = imageData[offset];
-          const g = imageData[offset + 1];
-          const b = imageData[offset + 2];
-          const brightness = (r + g + b) / 3;
-          const norm = invert ? 255 - brightness : brightness;
-          const charIndex = Math.floor((norm / 255) * (charSet.length - 1));
-          asciiStr += charSet.charAt(charIndex);
-        }
-        asciiStr += '\n';
+    // Drawing input
+    let drawingActive = false;
+    canvas.addEventListener('mousedown', (e) => {
+      if (overlay.style.display === 'none') {
+        drawingActive = true;
+        drawing = [];
+        path = [];
+        animating = false;
+        ctx.clearRect(0, 0, W, H);
       }
-      asciiDiv.textContent = asciiStr;
-      requestAnimationFrame(renderLoop);
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      if (drawingActive) {
+        const x = e.clientX - W/2;
+        const y = e.clientY - H/2;
+        drawing.push({ x, y });
+        ctx.clearRect(0, 0, W, H);
+        ctx.beginPath();
+        drawing.forEach((p, i) => {
+          const dx = p.x + W/2, dy = p.y + H/2;
+          i ? ctx.lineTo(dx, dy) : ctx.moveTo(dx, dy);
+        });
+        ctx.strokeStyle = '#A3FF84'; ctx.lineWidth = 2; ctx.stroke();
+      }
+    });
+    canvas.addEventListener('mouseup', () => {
+      if (drawingActive) {
+        drawingActive = false;
+        if (drawing.length) {
+          const pts = drawing.map(p => new Complex(p.x, p.y));
+          fourier = dft(pts);
+          time = 0;
+          path = [];
+          animating = true;
+          animate();
+        }
+      }
+    });
+
+    // Draw epicycles & path
+    function drawEpicycles(x, y, rotation, F) {
+      F.forEach(f => {
+        const prevX = x, prevY = y;
+        x += f.amp * Math.cos(f.freq * time + f.phase + rotation);
+        y += f.amp * Math.sin(f.freq * time + f.phase + rotation);
+        // circle
+        ctx.beginPath();
+        ctx.arc(prevX + W/2, prevY + H/2, f.amp, 0, 2*Math.PI);
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.stroke();
+        // radius
+        ctx.beginPath();
+        ctx.moveTo(prevX + W/2, prevY + H/2);
+        ctx.lineTo(x + W/2, y + H/2);
+        ctx.strokeStyle = '#A3FF84'; ctx.lineWidth = 2; ctx.stroke();
+      });
+      return { x, y };
     }
+
+    // Animation loop with pause
+    function animate() {
+      ctx.clearRect(0, 0, W, H);
+      const v = drawEpicycles(0, 0, 0, fourier);
+      path.unshift(v);
+      // draw path
+      ctx.beginPath();
+      path.forEach((p, i) => {
+        const dx = p.x + W/2, dy = p.y + H/2;
+        i ? ctx.lineTo(dx, dy) : ctx.moveTo(dx, dy);
+      });
+      ctx.strokeStyle = '#A3FF84'; ctx.lineWidth = 2; ctx.stroke();
+
+      const period = 2 * Math.PI;
+      const dt = period / fourier.length;
+      time += dt;
+      if (time < period) {
+        requestAnimationFrame(animate);
+      } else {
+        // pause on completed drawing then restart
+        setTimeout(() => {
+          time = 0;
+          path = [];
+          requestAnimationFrame(animate);
+        }, 1500);
+      }
+    }
+
+    // Initialize signature on load
+    window.onload = startSignature;
   </script>
 </body>
 </html>
