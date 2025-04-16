@@ -1,142 +1,205 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fourier Series Drawer</title>
   <style>
-    body { margin:0; overflow:hidden; background:#202124; color:#fff; display:flex; flex-direction:column; align-items:center; }
-    #controls { position:absolute; top:10px; z-index:10; }
-    button { padding:8px 16px; margin-right:8px; font-size:16px; }
-    canvas { border:1px solid #444; background:#fff; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; overflow: hidden; font-family: 'Segoe UI', sans-serif; color: #eee; }
+    canvas { position: absolute; top: 0; left: 0; }
+    #overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      background: rgba(0,0,0,0.8); text-align: center; padding: 1rem; z-index: 10;
+    }
+    #overlay h1 { font-size: 2rem; margin-bottom: 1rem; }
+    #overlay p { font-size: 1rem; margin: 0.5rem 0; }
+    #overlay a { color: #A3FF84; text-decoration: none; }
+    #overlay a:hover { text-decoration: underline; }
+    #overlay button {
+      margin-top: 1.5rem; padding: 0.75rem 1.5rem;
+      font-size: 1rem; border: 2px solid #A3FF84; background: transparent;
+      color: #A3FF84; cursor: pointer; border-radius: 4px;
+      transition: background 0.2s;
+    }
+    #overlay button:hover { background: rgba(163,255,132,0.2); }
+    #controls {
+      position: absolute; top: 20px; right: 20px; z-index: 10; display: none;
+    }
+    #controls button {
+      margin-left: 8px; padding: 0.5rem 1rem;
+      font-size: 0.9rem; border: 2px solid #A3FF84; background: transparent;
+      color: #A3FF84; cursor: pointer; border-radius: 4px;
+      transition: background 0.2s;
+    }
+    #controls button:hover { background: rgba(163,255,132,0.2); }
   </style>
 </head>
 <body>
+  <div id="overlay">
+    <h1>Draw something (one continuous line)<br>to see it turned into a Fourier series animation!</h1>
+    <p>Confused? This <a href="https://youtu.be/spUNpyF58BY" target="_blank">video</a> explains Fourier series better than I ever could.</p>
+    <p><em>tldw:</em> circles + math + drawings = ✨</p>
+    <button id="startDraw">Draw your own</button>
+  </div>
   <div id="controls">
     <button id="clear">Clear</button>
-    <button id="start">Start Fourier</button>
+    <button id="restart">Restart</button>
   </div>
   <canvas id="canvas"></canvas>
   <script>
-  // Complex class for DFT
-  class Complex {
-    constructor(re, im) { this.re = re; this.im = im; }
-    add(c) { return new Complex(this.re + c.re, this.im + c.im); }
-    mul(c) { return new Complex(
-        this.re * c.re - this.im * c.im,
-        this.re * c.im + this.im * c.re
-      ); }
-  }
-  // Discrete Fourier Transform
-  function dft(x) {
-    const X = [];
-    const N = x.length;
-    for (let k = 0; k < N; k++) {
-      let sum = new Complex(0,0);
-      for (let n = 0; n < N; n++) {
-        const phi = (2 * Math.PI * k * n) / N;
-        const c = new Complex(Math.cos(phi), -Math.sin(phi));
-        sum = sum.add(x[n].mul(c));
+    // Complex helper
+    class Complex {
+      constructor(re, im) { this.re = re; this.im = im; }
+      add(c) { return new Complex(this.re + c.re, this.im + c.im); }
+      mul(c) {
+        return new Complex(
+          this.re * c.re - this.im * c.im,
+          this.re * c.im + this.im * c.re
+        );
       }
-      sum.re /= N; sum.im /= N;
-      let freq = k;
-      if (k > N/2) freq = k - N;
-      const amp = Math.hypot(sum.re, sum.im);
-      const phase = Math.atan2(sum.im, sum.re);
-      X.push({ re: sum.re, im: sum.im, freq, amp, phase });
     }
-    return X.sort((a,b) => b.amp - a.amp);
-  }
-  // Setup canvas
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
-  function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-  }
-  window.addEventListener('resize', resize);
-  resize();
-  let drawing = [];
-  let fourier = [];
-  let time = 0;
-  let path = [];
-  let animating = false;
-  // Drawing input
-  canvas.addEventListener('mousedown', () => { if (!animating) drawing = []; });
-  canvas.addEventListener('mousemove', (e) => {
-    if (!animating && e.buttons) {
-      drawing.push({ x: e.clientX - canvas.width/2, y: e.clientY - canvas.height/2 });
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.beginPath();
-      drawing.forEach((p, i) => {
-        if (i === 0) ctx.moveTo(p.x + canvas.width/2, p.y + canvas.height/2);
-        else ctx.lineTo(p.x + canvas.width/2, p.y + canvas.height/2);
-      });
-      ctx.strokeStyle = '#ff0055'; ctx.lineWidth = 2; ctx.stroke();
+    // Discrete Fourier Transform
+    function dft(x) {
+      const X = [];
+      const N = x.length;
+      for (let k = 0; k < N; k++) {
+        let sum = new Complex(0, 0);
+        for (let n = 0; n < N; n++) {
+          const phi = (2 * Math.PI * k * n) / N;
+          const c = new Complex(Math.cos(phi), -Math.sin(phi));
+          sum = sum.add(x[n].mul(c));
+        }
+        sum.re /= N; sum.im /= N;
+        let freq = k;
+        if (k > N/2) freq = k - N;
+        const amp = Math.hypot(sum.re, sum.im);
+        const phase = Math.atan2(sum.im, sum.re);
+        X.push({ freq, amp, phase, re: sum.re, im: sum.im });
+      }
+      return X.sort((a, b) => b.amp - a.amp);
     }
-  });
-  // Compute and start
-  canvas.addEventListener('mouseup', () => {
-    if (!animating && drawing.length) {
-      const x = drawing.map(p => new Complex(p.x, p.y));
-      fourier = dft(x);
-      animating = true;
-      time = 0;
+    // Canvas setup
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let W, H;
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // State
+    let drawing = [];
+    let fourier = [];
+    let time = 0;
+    let path = [];
+    let animating = false;
+
+    const overlay = document.getElementById('overlay');
+    const controls = document.getElementById('controls');
+
+    document.getElementById('startDraw').addEventListener('click', () => {
+      overlay.style.display = 'none';
+      controls.style.display = 'block';
+    });
+    document.getElementById('clear').addEventListener('click', () => {
+      drawing = [];
+      animating = false;
       path = [];
-      animate();
-    }
-  });
-  // Controls
-  document.getElementById('clear').addEventListener('click', () => {
-    drawing = [];
-    animating = false;
-    path = [];
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  });
-  document.getElementById('start').addEventListener('click', () => {
-    if (!animating && drawing.length) {
-      const x = drawing.map(p => new Complex(p.x, p.y));
-      fourier = dft(x);
-      animating = true; time = 0; path = [];
-      animate();
-    }
-  });
-  // Draw epicycles and path
-  function drawEpicycles(x, y, rotation, fourier) {
-    fourier.forEach(f => {
-      const prevx = x, prevy = y;
-      x += f.amp * Math.cos(f.freq * time + f.phase + rotation);
-      y += f.amp * Math.sin(f.freq * time + f.phase + rotation);
-      // circle
-      ctx.beginPath();
-      ctx.arc(prevx + canvas.width/2, prevy + canvas.height/2, f.amp, 0, 2*Math.PI);
-      ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1; ctx.stroke();
-      // radius
-      ctx.beginPath();
-      ctx.moveTo(prevx + canvas.width/2, prevy + canvas.height/2);
-      ctx.lineTo(x + canvas.width/2, y + canvas.height/2);
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.clearRect(0, 0, W, H);
     });
-    return { x, y };
-  }
-  function animate() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const v = drawEpicycles(0, 0, 0, fourier);
-    path.unshift(v);
-    // draw path
-    ctx.beginPath();
-    path.forEach((p, i) => {
-      if (i === 0) ctx.moveTo(p.x + canvas.width/2, p.y + canvas.height/2);
-      else ctx.lineTo(p.x + canvas.width/2, p.y + canvas.height/2);
+    document.getElementById('restart').addEventListener('click', () => {
+      if (drawing.length) {
+        const pts = drawing.map(p => new Complex(p.x, p.y));
+        fourier = dft(pts);
+        time = 0;
+        path = [];
+        animating = true;
+        animate();
+      }
     });
-    ctx.strokeStyle = '#ff0055'; ctx.lineWidth = 2; ctx.stroke();
-    const dt = (2 * Math.PI) / fourier.length;
-    time += dt;
-    if (time > 2 * Math.PI) {
-      time = 0; path = [];
+
+    // Drawing input
+    let drawingActive = false;
+    canvas.addEventListener('mousedown', (e) => {
+      if (overlay.style.display === 'none') {
+        drawingActive = true;
+        drawing = [];
+        ctx.clearRect(0, 0, W, H);
+      }
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      if (drawingActive) {
+        const x = e.clientX - W/2;
+        const y = e.clientY - H/2;
+        drawing.push({ x, y });
+        // draw raw line
+        ctx.clearRect(0, 0, W, H);
+        ctx.beginPath();
+        drawing.forEach((p, i) => {
+          const dx = p.x + W/2, dy = p.y + H/2;
+          i ? ctx.lineTo(dx, dy) : ctx.moveTo(dx, dy);
+        });
+        ctx.strokeStyle = '#A3FF84'; ctx.lineWidth = 2; ctx.stroke();
+      }
+    });
+    canvas.addEventListener('mouseup', () => {
+      if (drawingActive) {
+        drawingActive = false;
+        if (drawing.length) {
+          const pts = drawing.map(p => new Complex(p.x, p.y));
+          fourier = dft(pts);
+          time = 0;
+          path = [];
+          animating = true;
+          animate();
+        }
+      }
+    });
+
+    // Epicycles
+    function drawEpicycles(x, y, rotation, F) {
+      for (const f of F) {
+        const prevX = x, prevY = y;
+        x += f.amp * Math.cos(f.freq * time + f.phase + rotation);
+        y += f.amp * Math.sin(f.freq * time + f.phase + rotation);
+        // circle
+        ctx.beginPath();
+        ctx.arc(prevX + W/2, prevY + H/2, f.amp, 0, 2*Math.PI);
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.stroke();
+        // radius
+        ctx.beginPath();
+        ctx.moveTo(prevX + W/2, prevY + H/2);
+        ctx.lineTo(x + W/2, y + H/2);
+        ctx.strokeStyle = '#A3FF84'; ctx.lineWidth = 2; ctx.stroke();
+      }
+      return { x, y };
     }
-    if (animating) requestAnimationFrame(animate);
-  }
+
+    // Animation loop
+    function animate() {
+      ctx.clearRect(0, 0, W, H);
+      const v = drawEpicycles(0, 0, 0, fourier);
+      path.unshift(v);
+      // draw traced path
+      ctx.beginPath();
+      path.forEach((p, i) => {
+        const dx = p.x + W/2, dy = p.y + H/2;
+        i ? ctx.lineTo(dx, dy) : ctx.moveTo(dx, dy);
+      });
+      ctx.strokeStyle = '#A3FF84'; ctx.lineWidth = 2; ctx.stroke();
+
+      const dt = (2 * Math.PI) / fourier.length;
+      time += dt;
+      if (time > 2 * Math.PI) {
+        time = 0;
+        path = [];
+      }
+      if (animating) requestAnimationFrame(animate);
+    }
   </script>
 </body>
 </html>
